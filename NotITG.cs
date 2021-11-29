@@ -163,19 +163,6 @@ namespace NotITG.External
 				if (CloseHandle(m_hProcess) == 0)
 					throw new Exception("Closehandle Failed");
 			}
-
-			/*public byte[] Read(IntPtr address, uint bytes_to_read, out int bytes_read)
-			{
-				byte[] buffer = new byte[bytes_to_read];
-				ReadProcessMemory(m_hProcess, address, buffer, bytes_to_read, out IntPtr ptrBytesRead);
-				bytes_read = ptrBytesRead.ToInt32();
-				return buffer;
-			}
-			public void Write(IntPtr address, byte[] bytes_to_write, out int bytes_written)
-			{
-				WriteProcessMemory(m_hProcess, address, bytes_to_write, (uint)bytes_to_write.Length, out IntPtr ptrBytesWrite);
-				bytes_written = ptrBytesWrite.ToInt32();
-			}*/
 			public byte[] Read(IntPtr address, uint bytes_to_read)
 			{
 				byte[] buffer = new byte[bytes_to_read];
@@ -184,7 +171,6 @@ namespace NotITG.External
 			}
 			public void Write(IntPtr address, byte[] bytes_to_write)
 			{
-				// Yeah we dont need the bytes_written part. We can just discard that.
 				WriteProcessMemory(m_hProcess, address, bytes_to_write, (uint)bytes_to_write.Length, out IntPtr _);
 			}
 		}
