@@ -320,20 +320,22 @@ namespace NotITG.External.ProcessHandler
 		public override unsafe void Write(IntPtr address, byte[] bytes_to_write)
 		{
 			int size = bytes_to_write.Length;
-			var ptr = stackalloc byte[size];
-			var localIo = new iovec
+			fixed (byte* ptr = bytes_to_write)
 			{
-				iov_base = ptr,
-				iov_len = size
-			};
-			var remoteIo = new iovec
-			{
-				iov_base = address.ToPointer(),
-				iov_len = size
-			};
+				var localIo = new iovec
+				{
+					iov_base = ptr,
+					iov_len = size
+				};
+				var remoteIo = new iovec
+				{
+					iov_base = address.ToPointer(),
+					iov_len = size
+				};
 
-			var res = process_vm_writev(processID, &localIo, 1, &remoteIo, 1, 0);
-			if (res == -1) throw new Exception("process_vm_writev returned -1");
+				var res = process_vm_writev(processID, &localIo, 1, &remoteIo, 1, 0);
+				if (res == -1) throw new Exception("process_vm_writev returned -1");
+			}
 		}
 	}
 }
