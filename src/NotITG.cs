@@ -60,6 +60,7 @@ namespace NotITG.External
 							Console.WriteLine(ex);
 							return false;
 						}
+						catch { }
 
 					}
 				}
@@ -99,6 +100,7 @@ namespace NotITG.External
 						Console.WriteLine(ex);
 						return false;
 					}
+					catch { }
 				}
 			}
 
