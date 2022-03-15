@@ -252,12 +252,13 @@ namespace NotITG.External.ProcessHandler
 		private int processID = 0;
 		public ProcessMemoryLinux(int processID)
 		{
-			if (processID != 0) return;
+			if (this.processID != 0) return;
 			this.processID = processID;
 		}
 
 		public override void Close()
 		{
+			if (processID == 0) return;
 			this.processID = 0;
 		}
 
