@@ -15,16 +15,17 @@ namespace NotITG.External
 		public INotITGVersion Details;
 		public Process Process = null;
 		public ProcessMemory Memory = null;
+
 		private string gamePath;
+		public string GamePath { get => gamePath; }
 
 		public bool Connected { get { return this.Process != null; } }
-		public string GamePath { get => gamePath; }
 
 		private ProcessMemory GetMemoryReader(int processID)
 		{
 			if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
 				return new ProcessMemoryWindows(processID);
-			else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+			if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
 				return new ProcessMemoryLinux(processID);
 
 			throw new Exception("OS not handled.");
@@ -35,7 +36,7 @@ namespace NotITG.External
 			if (Connected) return true;
 
 			var processes = Process.GetProcesses();
-			if (deep)
+			if (!deep)
 			{
 				foreach (var process in processes)
 				{
@@ -54,7 +55,11 @@ namespace NotITG.External
 								return true;
 							}
 						}
-						catch { }
+						catch (ProcessMemoryPrivilegeException ex)
+						{
+							Console.WriteLine(ex);
+							return false;
+						}
 
 					}
 				}
@@ -63,28 +68,37 @@ namespace NotITG.External
 			{
 				foreach (var process in processes)
 				{
-					var memory = GetMemoryReader(process.Id);
-
-					foreach (var detail_key in NotITGVersions.Versions.Keys)
+					try
 					{
-						var detail = NotITGVersions.Versions[detail_key];
-						try
-						{
-							byte[] version_byte = Encoding.ASCII.GetBytes(detail.BuildDate.ToString());
-							string read_date = Encoding.ASCII.GetString(memory.Read(detail.BuildAddress, (uint)version_byte.Length));
-							if (read_date.ToLower().Equals(detail.BuildDate.ToString().ToLower()))
-							{
-								Version = detail_key;
-								Process = process;
-								Memory = memory;
-								gamePath = process.MainModule.FileName;
-								return true;
-							}
-						}
-						catch { }
-					}
+						var memory = GetMemoryReader(process.Id);
 
-					memory.Close();
+						foreach (var detail_key in NotITGVersions.Versions.Keys)
+						{
+							var detail = NotITGVersions.Versions[detail_key];
+							try
+							{
+								byte[] version_byte = Encoding.ASCII.GetBytes(detail.BuildDate.ToString());
+								string read_date = Encoding.ASCII.GetString(memory.Read(detail.BuildAddress, (uint)version_byte.Length));
+								if (read_date.ToLower().Equals(detail.BuildDate.ToString().ToLower()))
+								{
+									Version = detail_key;
+									Process = process;
+									Memory = memory;
+									Details = detail;
+									gamePath = process.MainModule.FileName;
+									return true;
+								}
+							}
+							catch { }
+						}
+
+						memory.Close();
+					}
+					catch (ProcessMemoryPrivilegeException ex)
+					{
+						Console.WriteLine(ex);
+						return false;
+					}
 				}
 			}
 
@@ -112,6 +126,7 @@ namespace NotITG.External
 							Version = detail_key;
 							Process = process;
 							Memory = memory;
+							Details = detail;
 							gamePath = process.MainModule.FileName;
 							return true;
 						}
@@ -120,6 +135,11 @@ namespace NotITG.External
 				}
 
 				memory.Close();
+				return false;
+			}
+			catch (ProcessMemoryPrivilegeException ex)
+			{
+				Console.WriteLine(ex);
 				return false;
 			}
 			catch (ArgumentException)
@@ -181,13 +201,20 @@ namespace NotITG.External
 
 namespace NotITG.External.ProcessHandler
 {
-	using System.Runtime.CompilerServices;
-
 	public abstract class ProcessMemory
 	{
 		public abstract void Close();
 		public abstract byte[] Read(IntPtr address, uint bytes_to_read);
 		public abstract void Write(IntPtr address, byte[] bytes_to_write);
+	}
+
+	public class ProcessMemoryPrivilegeException : Exception
+	{
+		public ProcessMemoryPrivilegeException() { }
+
+		public ProcessMemoryPrivilegeException(string message) : base(message) { }
+
+		public ProcessMemoryPrivilegeException(string message, Exception inner) : base(message, inner) { }
 	}
 
 	public class ProcessMemoryWindows : ProcessMemory
@@ -249,9 +276,13 @@ namespace NotITG.External.ProcessHandler
 		[DllImport("libc.so.6")]
 		private static extern unsafe int process_vm_writev(int pid, iovec* local_iov, ulong liovcnt, iovec* remote_iov, ulong riovcnt, ulong flags);
 
+		[DllImport("libc.so.6")]
+		private static extern uint getuid();
+
 		private int processID = 0;
 		public ProcessMemoryLinux(int processID)
 		{
+			if (getuid() != 0) throw new ProcessMemoryPrivilegeException("ProcessMemoryLinux is constructed without sudo privileges");
 			if (this.processID != 0) return;
 			this.processID = processID;
 		}
@@ -259,7 +290,7 @@ namespace NotITG.External.ProcessHandler
 		public override void Close()
 		{
 			if (processID == 0) return;
-			this.processID = 0;
+			processID = 0;
 		}
 
 		public override unsafe byte[] Read(IntPtr address, uint bytes_to_read)
@@ -324,12 +355,22 @@ namespace NotITG.External.Details
 
 	public struct INotITGVersion
 	{
-		public IntPtr BuildAddress;
-		public int BuildDate;
-		public IntPtr ExternalAddress;
-		public int Size;
+		public readonly IntPtr BuildAddress;
+		public readonly int BuildDate;
+		public readonly IntPtr ExternalAddress;
+		public readonly int Size;
 
-		public string Filename;
+		public readonly string Filename;
+
+		public INotITGVersion(IntPtr buildAddr, int buildDate, IntPtr extAddr, int size, string name)
+		{
+			BuildAddress = buildAddr;
+			BuildDate = buildDate;
+			ExternalAddress = extAddr;
+			Size = size;
+
+			Filename = name;
+		}
 	}
 
 	public class NotITGVersions
@@ -337,131 +378,55 @@ namespace NotITG.External.Details
 
 		public static readonly Dictionary<NotITGVersionNumber, INotITGVersion> Versions = new Dictionary<NotITGVersionNumber, INotITGVersion>()
 		{
-			[NotITGVersionNumber.V1] = new INotITGVersion()
-			{
-				BuildAddress = (IntPtr)0x006AED20,
-				BuildDate = 20161224,
-				ExternalAddress = (IntPtr)0x00896950,
-				Size = 10,
-				Filename = "NotITG.exe"
-			},
-			[NotITGVersionNumber.V2] = new INotITGVersion()
-			{
-				BuildAddress = (IntPtr)0x006B7D40,
-				BuildDate = 20170405,
-				ExternalAddress = (IntPtr)0x008A0880,
-				Size = 10,
-				Filename = "NotITG-170405.exe"
-			},
-			[NotITGVersionNumber.V3] = new INotITGVersion()
-			{
-				BuildAddress = (IntPtr)0x006DFD60,
-				BuildDate = 20180617,
-				ExternalAddress = (IntPtr)0x008CC9D8,
-				Size = 64,
-				Filename = "NotITG-V3.exe"
-			},
-			[NotITGVersionNumber.V3_1] = new INotITGVersion()
-			{
-				BuildAddress = (IntPtr)0x006E7D60,
-				BuildDate = 20180827,
-				ExternalAddress = (IntPtr)0x008BE0F8,
-				Size = 64,
-				Filename = "NotITG-V3.1.exe"
-			},
-			[NotITGVersionNumber.V4] = new INotITGVersion()
-			{
-				BuildAddress = (IntPtr)0x006E0E60,
-				BuildDate = 20200112,
-				ExternalAddress = (IntPtr)0x008BA388,
-				Size = 64,
-				Filename = "NotITG-V4.exe"
-			},
-			[NotITGVersionNumber.V4_0_1] = new INotITGVersion()
-			{
-				BuildAddress = (IntPtr)0x006C5E40,
-				BuildDate = 20200126,
-				ExternalAddress = (IntPtr)0x00897D10,
-				Size = 64,
-				Filename = "NotITG-V4.0.1.exe"
-			},
-			[NotITGVersionNumber.V4_2] = new INotITGVersion()
-			{
-				BuildAddress = (IntPtr)0x006FAD40,
-				BuildDate = 20210420,
-				ExternalAddress = (IntPtr)0x008BFF38,
-				Size = 256,
-				Filename = "NotITG-V4.2.0.exe"
-			},
+			[NotITGVersionNumber.V1] = new INotITGVersion(
+				(IntPtr)0x006AED20,
+				20161224,
+				(IntPtr)0x00896950,
+				10,
+				"NotITG.exe"
+			),
+			[NotITGVersionNumber.V2] = new INotITGVersion(
+				(IntPtr)0x006B7D40,
+				20170405,
+				(IntPtr)0x008A0880,
+				10,
+				"NotITG-170405.exe"
+			),
+			[NotITGVersionNumber.V3] = new INotITGVersion(
+				(IntPtr)0x006DFD60,
+				20180617,
+				(IntPtr)0x008CC9D8,
+				64,
+				"NotITG-V3.exe"
+			),
+			[NotITGVersionNumber.V3_1] = new INotITGVersion(
+				(IntPtr)0x006E7D60,
+				20180827,
+				(IntPtr)0x008BE0F8,
+				64,
+				"NotITG-V3.1.exe"
+			),
+			[NotITGVersionNumber.V4] = new INotITGVersion(
+				(IntPtr)0x006E0E60,
+				20200112,
+				(IntPtr)0x008BA388,
+				64,
+				"NotITG-V4.exe"
+			),
+			[NotITGVersionNumber.V4_0_1] = new INotITGVersion(
+				(IntPtr)0x006C5E40,
+				20200126,
+				(IntPtr)0x00897D10,
+				64,
+				"NotITG-V4.0.1.exe"
+			),
+			[NotITGVersionNumber.V4_2] = new INotITGVersion(
+				(IntPtr)0x006FAD40,
+				20210420,
+				(IntPtr)0x008BFF38,
+				256,
+				"NotITG-V4.2.0.exe"
+			),
 		};
 	}
-
-	/*public class NotITGDetails
-	{
-		public NOTITG_VERSION Version { get; set; }
-		public string Filename { get; set; }
-		public int VersionDate { get; set; }
-		public int IndexLimit { get; set; }
-		public IntPtr VersionAddress { get; set; }
-		public IntPtr ExternalAddress { get; set; }
-
-		public NotITGDetails(NOTITG_VERSION version)
-		{
-			this.Version = version;
-			switch (version)
-			{
-				case NOTITG_VERSION.V1:
-					this.Filename = "NotITG.exe";
-					this.VersionDate = 20161224;
-					this.VersionAddress = (IntPtr)0x006AED20;
-					this.ExternalAddress = (IntPtr)0x00896950;
-					this.IndexLimit = 9;
-					break;
-				case NOTITG_VERSION.V2:
-					this.Filename = "NotITG-170405.exe";
-					this.VersionDate = 20170405;
-					this.VersionAddress = (IntPtr)0x006B7D40;
-					this.ExternalAddress = (IntPtr)0x008A0880;
-					this.IndexLimit = 9;
-					break;
-				case NOTITG_VERSION.V3:
-					this.Filename = "NotITG-V3.exe";
-					this.VersionDate = 20180617;
-					this.VersionAddress = (IntPtr)0x006DFD60;
-					this.ExternalAddress = (IntPtr)0x008CC9D8;
-					this.IndexLimit = 63;
-					break;
-				case NOTITG_VERSION.V3_1:
-					this.Filename = "NotITG-V3.1.exe";
-					this.VersionDate = 20180827;
-					this.VersionAddress = (IntPtr)0x006E7D60;
-					this.ExternalAddress = (IntPtr)0x008BE0F8;
-					this.IndexLimit = 63;
-					break;
-				case NOTITG_VERSION.V4:
-					this.Filename = "NotITG-V4.exe";
-					this.VersionDate = 20200112;
-					this.VersionAddress = (IntPtr)0x006E0E60;
-					this.ExternalAddress = (IntPtr)0x008BA388;
-					this.IndexLimit = 63;
-					break;
-				case NOTITG_VERSION.V4_0_1:
-					this.Filename = "NotITG-V4.0.1.exe";
-					this.VersionDate = 20200126;
-					this.VersionAddress = (IntPtr)0x006C5E40;
-					this.ExternalAddress = (IntPtr)0x00897D10;
-					this.IndexLimit = 63;
-					break;
-				case NOTITG_VERSION.V4_2:
-					this.Filename = "NotITG-V4.2.0.exe";
-					this.VersionDate = 20210420;
-					this.VersionAddress = (IntPtr)0x006FAD40;
-					this.ExternalAddress = (IntPtr)0x008BFF38;
-					this.IndexLimit = 255;
-					break;
-				default:
-					throw new Exception("Version unknown!");
-			}
-		}
-	}*/
 }
