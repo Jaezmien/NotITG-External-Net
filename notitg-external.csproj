@@ -3,6 +3,15 @@
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
     <RootNamespace>notitg_external</RootNamespace>
+	<PackageID>NotITGExternalNet</PackageID>
+	<Authors>Jaezmien Naejara</Authors>
+	<Version>2.0.0</Version>
+
+	<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Runtime.CompilerServices.Unsafe" Version="6.0.0" />
+  </ItemGroup>
 
 </Project>
